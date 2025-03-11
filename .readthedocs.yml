@@ -6,7 +6,8 @@ build:
     python: "3.9"
   commands:
     - pip install .
-    - pip install --no-cache-dir sphinx_rtd_theme
+    - pip install sphinx_rtd_theme
+    - sphinx-build -b html docs/ docs/_build/html
 
 sphinx:
   configuration: docs/conf.py
