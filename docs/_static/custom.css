@@ -1,0 +1,42 @@
+/* Fondo general */
+body {
+    background-color: #f9f9f9;
+    font-family: 'Open Sans', sans-serif;
+}
+
+/* Encabezados */
+h1, h2, h3, h4, h5, h6 {
+    color: #2C3E50;
+}
+/* Enlaces normales */
+a {
+    color: #2980B9;
+    text-decoration: none;
+}
+
+/* Enlaces al pasar el mouse */
+a:hover {
+    color: #1ABC9C;
+    text-decoration: underline;
+}
+/* Fondo de los bloques de código */
+.highlight pre {
+    background-color: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 10px;
+}
+
+/* Fuente para el código */
+.highlight {
+    font-family: 'Source Code Pro', monospace;
+}
+/* Cambiar el color de fondo de la cabecera */
+div.wy-side-nav-search {
+    background-color: #34495E;
+}
+
+/* Cambiar color de los enlaces de la navegación */
+.wy-menu-vertical a {
+    color: #ECF0F1;
+}

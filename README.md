@@ -12,7 +12,7 @@
 [![ascl](https://img.shields.io/badge/ascl-2205.016-blue.svg?colorB=262255)](https://ascl.net/2205.016)
 -->
 
-MultiREx is a Python library designed for generating synthetic exoplanet transmission spectra. This tool extends the functionalities of the `Taurex` library (see below), reorganizing and enabling the massive generation of spectra and observations with added noise. The package was originally devised for training large machine learning models at identifying the presence of biosignatures in noisy spectra. However, it should also be used for other purposes.
+MultiREx is a Python library designed for generating synthetic exoplanet transmission spectra. This tool extends the functionalities of the `Taurex <https://taurex3.readthedocs.io/en/latest/index.html>` library (see below), reorganizing and enabling the massive generation of spectra and observations with added noise. The package was originally devised for training large machine learning models at identifying the presence of biosignatures in noisy spectra. However, it should also be used for other purposes.
 
 For the science behind the model please refer to the following paper:
 
