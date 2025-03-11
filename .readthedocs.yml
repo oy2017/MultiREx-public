@@ -5,6 +5,7 @@ build:
   tools:
     python: "3.9"
   commands:
+    - pip install .
     - pip install sphinx_rtd_theme
 
 sphinx:
