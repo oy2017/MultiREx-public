@@ -46,7 +46,7 @@ to MNRAS,
    :caption: Contents:
 
    notebooks/quickstart
-   modules
+   modules   
    
 
 Key Features of MultiREx
