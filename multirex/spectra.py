@@ -258,6 +258,326 @@ wavenumber_grid = Physics.wavenumber_grid
 generate_value = Physics.generate_value
 generate_df_SNR_noise = Physics.generate_df_SNR_noise
 
+class Atmosphere:
+    """Represents a plane parallel atmosphere with specified properties and composition.
+    
+    This class allows you to define an atmosphere with properties like temperature
+    and pressure, as well as its chemical composition. The composition is specified
+    as a dictionary of gases with their mixing ratios in log10 values. The class
+    supports both fixed values and random generation from ranges.
+    
+    Attributes:
+        seed (int): Random seed for reproducibility.
+        temperature (float): Temperature of the atmosphere in Kelvin.
+        base_pressure (float): Base (bottom) pressure of the atmosphere in Pa.
+        top_pressure (float): Top pressure of the atmosphere in Pa.
+        composition (dict): Composition of the atmosphere with gases and their
+            mixing ratios in log10 values (e.g., {"H2O": -3, "CO2": -2}).
+        fill_gas (str or list): Gas or list of gases used as filler in the
+            atmosphere composition to ensure the total mixing ratio equals 1.
+        original_params (dict): The original parameters used to initialize the
+            atmosphere, including any ranges specified for random generation.
+    
+    Note:
+        The mixing ratios in the composition dictionary are in log10 scale.
+        For example, a value of -3 corresponds to a mixing ratio of 10^-3 = 0.001.
+    """
+    def __init__(self, seed=None, temperature=None, 
+                 base_pressure=None, top_pressure=None, 
+                 composition=None, fill_gas=None):        
+        """Initialize an Atmosphere object.
+        
+        Args:
+            seed (int, optional): Random seed for reproducibility. If None, current time is used.
+            temperature (float or tuple, optional): Temperature of the atmosphere in Kelvin.
+                Can be a single value or a range (min, max) for random generation.
+            base_pressure (float or tuple, optional): Base pressure of the atmosphere in Pa.
+                Can be a single value or a range (min, max) for random generation.
+            top_pressure (float or tuple, optional): Top pressure of the atmosphere in Pa.
+                Can be a single value or a range (min, max) for random generation.
+            composition (dict, optional): Composition of the atmosphere with gases and
+                their mixing ratios in log10 values. For example: {"H2O": -3, "CO2": [-2,-1]}
+                where values can be fixed or ranges for random generation.
+            fill_gas (str or list, optional): Gas or list of gases used as filler in the
+                atmosphere composition to ensure the total mixing ratio equals 1.
+        
+        Note:
+            The base_pressure must be greater than top_pressure, as base refers to
+            the bottom of the atmosphere (higher pressure) and top refers to the
+            upper boundary (lower pressure).
+        """
+        self._original_params = dict(
+            seed = seed,
+            temperature = temperature,
+            base_pressure = base_pressure,
+            top_pressure = top_pressure,
+            composition=  composition if composition is not None else dict(),
+            fill_gas = fill_gas
+        )
+
+        self._seed = seed if seed is not None else int(time.time())
+        np.random.seed(self._seed)
+        
+        # Initialize attributes with None to avoid validation errors during initialization
+        self._temperature = None
+        self._base_pressure = None
+        self._top_pressure = None
+        self._fill_gas = fill_gas
+        
+        # Use setter methods to properly initialize with validation
+        if temperature is not None:
+            self.set_temperature(temperature)
+        if base_pressure is not None:
+            self.set_base_pressure(base_pressure)
+        if top_pressure is not None:
+            self.set_top_pressure(top_pressure)
+        if composition is not None:
+            self.set_composition(composition)
+        else:
+            self._composition = dict()
+            
+    @property
+    def original_params(self):
+        return self._original_params
+
+    @property
+    def seed(self):
+        return self._seed
+    
+    def set_seed(self, value):
+        """Sets the seed used for randomness."""
+        self._seed = value
+        self._original_params["seed"] = value
+        np.random.seed(value)
+    
+    @property
+    def temperature(self):
+        return self._temperature
+
+    def set_temperature(self, value):     
+        """
+        Sets the temperature of the atmosphere, as an isothermal profile.
+        Parameters:
+        value (float or tuple): Temperature of the atmosphere in K (single value or range).
+        """   
+        #validations
+        if (isinstance(value, tuple) and
+            len(value) == 2):
+            if (value[0] < 0 or
+                value[1] < 0):
+                raise ValueError("Temperature values must be positive")
+        elif (isinstance(value, (int, float)) and
+                value < 0):
+            raise ValueError("Temperature value must be positive.")
+        
+        self._temperature = generate_value(value)
+        self._original_params["temperature"] = value
+
+    @property
+    def base_pressure(self):
+        """
+        :noindex:
+        """
+        return self._base_pressure
+
+    def set_base_pressure(self, value):
+        """
+        Sets the base pressure of the atmosphere.
+        Parameters:
+        value (float or tuple): Base pressure of the atmosphere in Pa (single value or range).
+        """
+        #validations
+        if (isinstance(value, tuple) and
+            len(value) == 2):
+            if (value[0] < 0 or
+                value[1] < 0):
+                raise ValueError("Base pressure values must be positive")
+        elif (isinstance(value, (int, float)) and
+              value < 0):
+            raise ValueError("Base pressure value must be positive.")
+            # validate if top pressure is smaller than base pressure
+        
+        self._base_pressure = generate_value(value)
+        
+        if (self._top_pressure is not None):
+            if self._base_pressure <= self._top_pressure:
+                raise ValueError("Base pressure must be greater than top pressure.")
+        
+        self._original_params["base_pressure"] = value
+
+    @property
+    def top_pressure(self):
+        return self._top_pressure
+
+    def set_top_pressure(self, value):        
+        """
+        Sets the top pressure of the atmosphere.
+        Parameters:
+        value (float or tuple): Top pressure of the atmosphere in Pa (single value or range).
+        """
+        # validations 
+        if (isinstance(value, tuple) and
+            len(value) == 2):
+            if (value[0] < 0 or
+                value[1] < 0):
+                raise ValueError("Top pressure values must be positive")
+        elif (isinstance(value, (int, float))
+              and value < 0):
+            raise ValueError("Top pressure value must be positive.")        
+                
+        self._top_pressure = generate_value(value)
+        
+        if (self._base_pressure is not None):
+            if self._top_pressure >= self._base_pressure:
+                raise ValueError("Top pressure must be smaller than base pressure.")
+        
+        self._original_params["top_pressure"] = value
+
+    @property
+    def composition(self):
+        return self._composition
+
+    def set_composition(self, gases):
+        """
+        Sets the composition of the atmosphere.
+        Parameters:
+        gases (dict): Composition of the atmosphere with gases and mix ratios in log10 values. 
+        (eg.{"H2O":  -3, "CO2": [-2,-1]})
+        """
+        self._composition = dict()
+        for gas, mix_ratio in gases.items():
+            self.add_gas(gas, mix_ratio)
+        self.validate_composition()
+
+    @property
+    def fill_gas(self):
+        return self._fill_gas
+
+    def set_fill_gas(self, gas):
+        """
+        Sets the filler gas of the atmosphere.
+        Parameters:
+        gas (str or list): Gas or list of gases used
+        as filler in the atmosphere composition.
+        """
+        self._fill_gas = gas
+        self._original_params["fill_gas"] = gas
+
+    def add_gas(self, gas, mix_ratio):
+        """
+        Adds a gas to the atmosphere composition with a log10 mix ratio.
+        If the gas already exists, its value is updated.
+        Parameters:
+        gas (str): Gas name.
+        mix_ratio (float or tuple): Mix ratio of the gas in log10.
+        """
+        if gas in self._composition:
+            old_value = self._composition[gas]
+            print((
+                f"{gas} already exists in the composition. "
+                f"Its old value was {old_value}. "
+                f"It will be updated to {mix_ratio}."
+                ))
+        
+        # Handle log10 values by converting to actual mixing ratios
+        value = generate_value(mix_ratio)
+        if isinstance(mix_ratio, tuple) or isinstance(value, (int, float)):
+            # If it's a tuple range or a direct value, store the actual mixing ratio (not log)
+            self._composition[gas] = 10**value if isinstance(value, (int, float)) else value
+        else:
+            self._composition[gas] = value
+            
+        self._original_params["composition"][gas] = mix_ratio
+        self.validate_composition()
+
+    def remove_gas(self, gas):
+        """
+        Removes a gas from the atmosphere composition.
+        Parameters:
+        gas (str): Gas name.
+        """
+        if gas not in self._composition:
+            print((
+                f"{gas} does not exist in the composition. "
+                f"No action will be taken."
+                ))
+            return
+        del self._composition[gas]
+        del self._original_params["composition"][gas]
+        self.validate_composition()
+        
+    def validate_composition(self):
+        """
+        Validates that the sum of gas mix ratios in the atmosphere composition does not exceed 1.
+        """
+        # Values are already stored as actual mixing ratios, not log values
+        total_mix_ratio = sum(self._composition.values())
+        
+        if (total_mix_ratio > 1 or
+            total_mix_ratio < 0):
+            raise ValueError((f"The sum of mix ratios must be between 0 and 1."
+                              f" Actual value: {total_mix_ratio}"))
+
+    def get_params(self):
+        """Returns the current parameters of the atmosphere.
+        
+        Returns:
+            dict: A dictionary containing the atmosphere's parameters including temperature,
+                base_pressure, top_pressure, composition, fill_gas, and seed.
+        """
+        return dict(
+            temperature = self._temperature,
+            base_pressure = self._base_pressure,
+            top_pressure = self._top_pressure,
+            composition = self._composition,
+            fill_gas = self._fill_gas,
+            seed = self._seed
+        )
+
+    def reshuffle(self):
+        """
+        Regenerates the atmosphere based on original values or range of values.
+        """
+        self._seed = self._original_params.get("seed", int(time.time()))
+        np.random.seed(self._seed)
+        self.set_temperature(self._original_params["temperature"])
+        self.set_base_pressure(self._original_params["base_pressure"])
+        self.set_top_pressure(self._original_params["top_pressure"])
+        self.set_composition(self._original_params.get("composition", {}))
+        self.set_fill_gas(self._original_params["fill_gas"])
+        
+    def validate(self):
+        """
+        Validates the atmosphere's essential properties are defined, allowing for an undefined composition if fill_gas is present.
+        """
+        essential_attrs = [
+            '_temperature', '_base_pressure', 
+            '_top_pressure', '_fill_gas'
+            ]        
+        missing_attrs = [
+            attr for attr in essential_attrs 
+            if getattr(self, attr) is None
+            ]
+        if missing_attrs:
+            print("Atmosphere Missing attributes:",
+                  [attr[1:] for attr in missing_attrs])
+            return False
+
+        #valid ranges for temperature, base_pressure, and top_pressure
+        if not all([
+            (isinstance(self._temperature, (int, float))
+                and self._temperature > 0),
+            (isinstance(self._base_pressure, (int, float))
+                and self._base_pressure > 0),
+            (isinstance(self._top_pressure, (int, float))
+                and self._top_pressure > 0),
+            self._base_pressure > self._top_pressure
+            ]):
+            print("Atmosphere has invalid attribute values.")
+            return False
+        return True
+
+
 class Planet:
     """Represents a planet with specified properties and an optional atmosphere.
     
@@ -434,307 +754,6 @@ class Planet:
             self._atmosphere.reshuffle()
 
 
-class Atmosphere:
-    """Represents a plane parallel atmosphere with specified properties and composition.
-    
-    This class allows you to define an atmosphere with properties like temperature
-    and pressure, as well as its chemical composition. The composition is specified
-    as a dictionary of gases with their mixing ratios in log10 values. The class
-    supports both fixed values and random generation from ranges.
-    
-    Attributes:
-        seed (int): Random seed for reproducibility.
-        temperature (float): Temperature of the atmosphere in Kelvin.
-        base_pressure (float): Base (bottom) pressure of the atmosphere in Pa.
-        top_pressure (float): Top pressure of the atmosphere in Pa.
-        composition (dict): Composition of the atmosphere with gases and their
-            mixing ratios in log10 values (e.g., {"H2O": -3, "CO2": -2}).
-        fill_gas (str or list): Gas or list of gases used as filler in the
-            atmosphere composition to ensure the total mixing ratio equals 1.
-        original_params (dict): The original parameters used to initialize the
-            atmosphere, including any ranges specified for random generation.
-    
-    Note:
-        The mixing ratios in the composition dictionary are in log10 scale.
-        For example, a value of -3 corresponds to a mixing ratio of 10^-3 = 0.001.
-    """
-    def __init__(self, seed=None, temperature=None, 
-                 base_pressure=None, top_pressure=None, 
-                 composition=None, fill_gas=None):        
-        """Initialize an Atmosphere object.
-        
-        Args:
-            seed (int, optional): Random seed for reproducibility. If None, current time is used.
-            temperature (float or tuple, optional): Temperature of the atmosphere in Kelvin.
-                Can be a single value or a range (min, max) for random generation.
-            base_pressure (float or tuple, optional): Base pressure of the atmosphere in Pa.
-                Can be a single value or a range (min, max) for random generation.
-            top_pressure (float or tuple, optional): Top pressure of the atmosphere in Pa.
-                Can be a single value or a range (min, max) for random generation.
-            composition (dict, optional): Composition of the atmosphere with gases and
-                their mixing ratios in log10 values. For example: {"H2O": -3, "CO2": [-2,-1]}
-                where values can be fixed or ranges for random generation.
-            fill_gas (str or list, optional): Gas or list of gases used as filler in the
-                atmosphere composition to ensure the total mixing ratio equals 1.
-        
-        Note:
-            The base_pressure must be greater than top_pressure, as base refers to
-            the bottom of the atmosphere (higher pressure) and top refers to the
-            upper boundary (lower pressure).
-        """
-        self._original_params = dict(
-            seed = seed,
-            temperature = temperature,
-            base_pressure = base_pressure,
-            top_pressure = top_pressure,
-            composition=  composition if composition is not None else dict(),
-            fill_gas = fill_gas
-        )
-
-        self._seed = seed if seed is not None else int(time.time())
-        np.random.seed(self._seed)
-        
-        self._temperature = generate_value(temperature)
-        self._base_pressure = generate_value(base_pressure)
-        self._top_pressure = generate_value(top_pressure)
-        self._fill_gas = fill_gas
-        if composition is not None:
-            self.set_composition(composition)
-        else:
-            self._composition = dict()
-            
-    @property
-    def original_params(self):
-        return self._original_params
-
-    @property
-    def seed(self):
-        return self._seed
-    
-    def set_seed(self, value):
-        """Sets the seed used for randomness."""
-        self._seed = value
-        self._original_params["seed"] = value
-        np.random.seed(value)
-    
-    @property
-    def temperature(self):
-        return self._temperature
-
-    def set_temperature(self, value):     
-        """
-        Sets the temperature of the atmosphere, as an isothermal profile.
-        Parameters:
-        value (float or tuple): Temperature of the atmosphere in K (single value or range).
-        """   
-        #validations
-        if (isinstance(value, tuple) and
-            len(value) == 2):
-            if (value[0] < 0 or
-                value[1] < 0):
-                raise ValueError("Temperature values must be positive")
-        elif (isinstance(value, (int, float)) and
-                value < 0):
-            raise ValueError("Temperature value must be positive.")
-        
-        self._temperature = generate_value(value)
-        self._original_params["temperature"] = value
-
-    @property
-    def base_pressure(self):
-        """
-        :noindex:
-        """
-        return self._base_pressure
-
-    def set_base_pressure(self, value):
-        """
-        Sets the base pressure of the atmosphere.
-        Parameters:
-        value (float or tuple): Base pressure of the atmosphere in Pa (single value or range).
-        """
-        #validations
-        if (isinstance(value, tuple) and
-            len(value) == 2):
-            if (value[0] < 0 or
-                value[1] < 0):
-                raise ValueError("Base pressure values must be positive")
-        elif (isinstance(value, (int, float)) and
-              value < 0):
-            raise ValueError("Base pressure value must be positive.")
-            # validate if top pressure is smaller than base pressure
-        
-        self._base_pressure = generate_value(value)
-        
-        if (self._top_pressure is not None
-            and self._base_pressure < self._top_pressure):
-            raise ValueError("Base pressure must be greater than top pressure.")
-        
-        self._original_params["base_pressure"] = value
-
-    @property
-    def top_pressure(self):
-        return self._top_pressure
-
-    def set_top_pressure(self, value):        
-        """
-        Sets the top pressure of the atmosphere.
-        Parameters:
-        value (float or tuple): Top pressure of the atmosphere in Pa (single value or range).
-        """
-        # validations 
-        if (isinstance(value, tuple) and
-            len(value) == 2):
-            if (value[0] < 0 or
-                value[1] < 0):
-                raise ValueError("Top pressure values must be positive")
-        elif (isinstance(value, (int, float))
-              and value < 0):
-            raise ValueError("Top pressure value must be positive.")        
-                
-        self._top_pressure = generate_value(value)
-        
-        if (self._base_pressure is not None
-            and self._top_pressure > self._base_pressure):
-            raise ValueError("Top pressure must be smaller than base pressure.")
-        
-        self._original_params["top_pressure"] = value
-
-    @property
-    def composition(self):
-        return self._composition
-
-    def set_composition(self, gases):
-        """
-        Sets the composition of the atmosphere.
-        Parameters:
-        gases (dict): Composition of the atmosphere with gases and mix ratios in log10 values. 
-        (eg.{"H2O":  -3, "CO2": [-2,-1]})
-        """
-        self._composition = dict()
-        for gas, mix_ratio in gases.items():
-            self.add_gas(gas, mix_ratio)
-        self.validate_composition()
-
-    @property
-    def fill_gas(self):
-        return self._fill_gas
-
-    def set_fill_gas(self, gas):
-        """
-        Sets the filler gas of the atmosphere.
-        Parameters:
-        gas (str or list): Gas or list of gases used
-        as filler in the atmosphere composition.
-        """
-        self._fill_gas = gas
-        self._original_params["fill_gas"] = gas
-
-    def add_gas(self, gas, mix_ratio):
-        """
-        Adds a gas to the atmosphere composition with a log10 mix ratio.
-        If the gas already exists, its value is updated.
-        Parameters:
-        gas (str): Gas name.
-        mix_ratio (float or tuple): Mix ratio of the gas in log10.
-        """
-        if gas in self._composition:
-            old_value = self._composition[gas]
-            print((
-                f"{gas} already exists in the composition. "
-                f"Its old value was {old_value}. "
-                f"It will be updated to {mix_ratio}."
-                ))
-            
-        self._composition[gas] = generate_value(mix_ratio)
-        self._original_params["composition"][gas] = mix_ratio
-        self.validate_composition()
-
-    def remove_gas(self, gas):
-        """
-        Removes a gas from the atmosphere composition.
-        Parameters:
-        gas (str): Gas name.
-        """
-        if gas not in self._composition:
-            print((
-                f"{gas} does not exist in the composition. "
-                f"No action will be taken."
-                ))
-            return
-        del self._composition[gas]
-        del self._original_params["composition"][gas]
-        self.validate_composition()
-        
-    def validate_composition(self):
-        """
-        Validates that the sum of gas mix ratios in the atmosphere composition, given in log10, does not exceed 1.
-        """
-        total_mix_ratio = sum(10**mix for mix in self._composition.values())
-        
-        if (total_mix_ratio > 1 or
-            total_mix_ratio < 0):
-            raise ValueError((f"The sum of mix ratios must be between 0 and 1."
-                              f" Actual value: {total_mix_ratio}"))
-
-    def get_params(self):
-        """Returns the current parameters of the atmosphere.
-        
-        Returns:
-            dict: A dictionary containing the atmosphere's parameters including temperature,
-                base_pressure, top_pressure, composition, fill_gas, and seed.
-        """
-        return dict(
-            temperature = self._temperature,
-            base_pressure = self._base_pressure,
-            top_pressure = self._top_pressure,
-            composition = self._composition,
-            fill_gas = self._fill_gas,
-            seed = self._seed
-        )
-
-    def reshuffle(self):
-        """
-        Regenerates the atmosphere based on original values or range of values.
-        """
-        self._seed = self._original_params.get("seed", int(time.time()))
-        np.random.seed(self._seed)
-        self.set_temperature(self._original_params["temperature"])
-        self.set_base_pressure(self._original_params["base_pressure"])
-        self.set_top_pressure(self._original_params["top_pressure"])
-        self.set_composition(self._original_params.get("composition", {}))
-        self.set_fill_gas(self._original_params["fill_gas"])
-        
-    def validate(self):
-        """
-        Validates the atmosphere's essential properties are defined, allowing for an undefined composition if fill_gas is present.
-        """
-        essential_attrs = [
-            '_temperature', '_base_pressure', 
-            '_top_pressure', '_fill_gas'
-            ]        
-        missing_attrs = [
-            attr for attr in essential_attrs 
-            if getattr(self, attr) is None
-            ]
-        if missing_attrs:
-            print("Atmosphere Missing attributes:",
-                  [attr[1:] for attr in missing_attrs])
-            return False
-
-        #valid ranges for temperature, base_pressure, and top_pressure
-        if not all([
-            (isinstance(self._temperature, (int, float))
-                and self._temperature > 0),
-            (isinstance(self._base_pressure, (int, float))
-                and self._base_pressure > 0),
-            (isinstance(self._top_pressure, (int, float))
-                and self._top_pressure > 0),
-            self._base_pressure > self._top_pressure
-            ]):
-            print("Atmosphere has invalid attribute values.")
-            return False
-        return True
 
 
 class Star:
@@ -1154,8 +1173,10 @@ class System:
         ## Taurex chemistry        
         tauchem=TaurexChemistry(fill_gases=self.planet.atmosphere.fill_gas)
         for gas, mix_ratio in self.planet.atmosphere.composition.items():
+            # Convert actual mixing ratio to log10 value for TauREx
+            log_mix_ratio = np.log10(mix_ratio) if mix_ratio > 0 else -10
             tauchem.addGas(ConstantGas(molecule_name=gas,
-                                        mix_ratio=10**mix_ratio))
+                                        mix_ratio=log_mix_ratio))
         
         ## Transmission model
         tm = TransmissionModel(
@@ -1171,8 +1192,9 @@ class System:
         
         self._transmission=tm
         
+        ## OFF 
         #load the zscale in km
-        self._zscale= self.transmission.altitude_profile*1e-3
+        #self._zscale= self.transmission.altitude_profile*1e-3
         
     @property
     def transmission(self):
