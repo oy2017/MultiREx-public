@@ -53,10 +53,10 @@ This document provides a detailed overview of the MultiREx repository structure 
 │   │   └── opacO3.dat
 │   ├── spectra.py      # Spectra handling
 │   ├── utils.py        # Utility functions
-│   └── version.py      # Version information
+│   ├── version.py      # Version information
+│   └── tests/          # Test directory
 ├── pyproject.toml      # Project configuration
-├── setup.py            # Setup script
-└── tests/              # Test directory
+└── setup.py           # Setup script
 ```
 
 ## Main Components
