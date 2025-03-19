@@ -34,6 +34,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt  
 from tqdm import tqdm
+import itertools
+import copy
+from joblib import Parallel, delayed
 
 import taurex.log
 from taurex.binning import FluxBinner, SimpleBinner
@@ -133,6 +136,66 @@ class Physics:
             return np.random.choice(value)
         else:
             return value
+            
+    def generate_parameter_space_values(value):
+        """Generate a sequence of values for parameter space exploration.
+        
+        This utility function handles different input types to generate a sequence of values:
+        
+        - If given a single value, returns a list with just that value
+        - If given a tuple range (min, max), returns a list with a random value in that range
+        - If given a list, returns the list unchanged
+        - If given a dict with keys 'min', 'max', 'n', and optionally 'distribution',
+          returns a sequence of n values between min and max with the specified distribution
+        - If given None, returns None
+        
+        Args:
+            value: The input value which can be:
+                None: Returns None
+                tuple (min, max): Returns a list with a random value between min and max
+                list: Returns the list unchanged
+                dict: With keys:
+                    'min': Minimum value
+                    'max': Maximum value
+                    'n': Number of points
+                    'distribution': 'linear' or 'log' (default: 'linear')
+                Any other type: Returns a list with just that value
+                
+        Returns:
+            list: A list of values based on the input type
+            
+        Examples:
+            >>> Physics.generate_parameter_space_values(5)
+            [5]
+            >>> Physics.generate_parameter_space_values((1, 10))  # Returns random value between 1 and 10
+            [7.3546]
+            >>> Physics.generate_parameter_space_values([1, 2, 3])
+            [1, 2, 3]
+            >>> Physics.generate_parameter_space_values({'min': -10, 'max': -1, 'n': 10, 'distribution': 'linear'})
+            [-10, -9, -8, -7, -6, -5, -4, -3, -2, -1]
+            >>> Physics.generate_parameter_space_values({'min': 100, 'max': 1000, 'n': 4, 'distribution': 'log'})
+            [100, 215.44, 464.16, 1000]
+        """
+        if value is None:
+            return None
+        elif isinstance(value, dict) and 'min' in value and 'max' in value and 'n' in value:
+            min_val = value['min']
+            max_val = value['max']
+            n_points = value['n']
+            distribution = value.get('distribution', 'linear')
+            
+            if distribution.lower() == 'log':
+                if min_val <= 0 or max_val <= 0:
+                    raise ValueError("Log distribution requires positive values")
+                return list(np.logspace(np.log10(min_val), np.log10(max_val), n_points))
+            else:  # linear distribution
+                return list(np.linspace(min_val, max_val, n_points))
+        elif isinstance(value, tuple) and len(value) == 2:
+            return [np.random.uniform(value[0], value[1])]
+        elif isinstance(value, list):
+            return value
+        else:
+            return [value]
         
     def generate_df_SNR_noise(df, n_repeat, SNR, seed=None):
         """
@@ -256,6 +319,7 @@ class Physics:
 # For legacy code compatibility
 wavenumber_grid = Physics.wavenumber_grid
 generate_value = Physics.generate_value
+generate_parameter_space_values = Physics.generate_parameter_space_values
 generate_df_SNR_noise = Physics.generate_df_SNR_noise
 
 class Atmosphere:
@@ -481,11 +545,7 @@ class Atmosphere:
         
         # Handle log10 values by converting to actual mixing ratios
         value = generate_value(mix_ratio)
-        if isinstance(mix_ratio, tuple) or isinstance(value, (int, float)):
-            # If it's a tuple range or a direct value, store the actual mixing ratio (not log)
-            self._composition[gas] = 10**value if isinstance(value, (int, float)) else value
-        else:
-            self._composition[gas] = value
+        self._composition[gas] = value
             
         self._original_params["composition"][gas] = mix_ratio
         self.validate_composition()
@@ -509,14 +569,31 @@ class Atmosphere:
     def validate_composition(self):
         """
         Validates that the sum of gas mix ratios in the atmosphere composition does not exceed 1.
+        Also checks if the maximum possible values from ranges could exceed 1 and issues a warning.
         """
-        # Values are already stored as actual mixing ratios, not log values
-        total_mix_ratio = sum(self._composition.values())
+        # Convert log values to actual mixing ratios for validation
+        actual_mix_ratios = [10**value for value in self._composition.values()]
+        total_mix_ratio = sum(actual_mix_ratios)
         
         if (total_mix_ratio > 1 or
             total_mix_ratio < 0):
             raise ValueError((f"The sum of mix ratios must be between 0 and 1."
-                              f" Actual value: {total_mix_ratio}"))
+                            f" Actual value: {total_mix_ratio}"))
+        
+        # Check if the maximum possible values from ranges could exceed 1
+        max_possible_values = []
+        for gas, mix_ratio in self._original_params["composition"].items():
+            if isinstance(mix_ratio, tuple) and len(mix_ratio) == 2:
+                # Get the maximum value from the range
+                max_possible_values.append(10**max(mix_ratio))
+            elif isinstance(mix_ratio, (int, float)):
+                max_possible_values.append(10**mix_ratio)
+        
+        if max_possible_values:
+            max_total = sum(max_possible_values)
+            if max_total > 1:
+                warnings.warn(f"The maximum possible sum of mix ratios from\
+                     ranges could exceed 1. Max possible sum: {max_total:.6f}")
 
     def get_params(self):
         """Returns the current parameters of the atmosphere.
@@ -576,6 +653,26 @@ class Atmosphere:
             print("Atmosphere has invalid attribute values.")
             return False
         return True
+
+    def __getstate__(self):
+        """
+        Return the state of the object for pickling.
+
+        Returns:
+            dict: The state dictionary of the Planet object.
+        """
+        # Copy the object's __dict__ (all attributes) into state.
+        state = self.__dict__.copy()
+        return state
+
+    def __setstate__(self, state):
+        """
+        Restore the state of the object from the unpickled state.
+
+        Args:
+            state (dict): The state dictionary to restore.
+        """
+        self.__dict__.update(state)
 
 
 class Planet:
@@ -753,7 +850,25 @@ class Planet:
         if atmosphere and self._atmosphere:
             self._atmosphere.reshuffle()
 
+    def __getstate__(self):
+        """
+        Return the state of the object for pickling.
 
+        Returns:
+            dict: The state dictionary of the Planet object.
+        """
+        # Copy the object's __dict__ (all attributes) into state.
+        state = self.__dict__.copy()
+        return state
+
+    def __setstate__(self, state):
+        """
+        Restore the state of the object from the unpickled state.
+
+        Args:
+            state (dict): The state dictionary to restore.
+        """
+        self.__dict__.update(state)
 
 
 class Star:
@@ -944,6 +1059,26 @@ class Star:
             return False
 
         return True
+
+    def __getstate__(self):
+        """
+        Return the state of the object for pickling.
+
+        Returns:
+            dict: The state dictionary of the Planet object.
+        """
+        # Copy the object's __dict__ (all attributes) into state.
+        state = self.__dict__.copy()
+        return state
+
+    def __setstate__(self, state):
+        """
+        Restore the state of the object from the unpickled state.
+
+        Args:
+            state (dict): The state dictionary to restore.
+        """
+        self.__dict__.update(state)
     
 class System:
     """Represents a planetary system consisting of a planet orbiting a star.
@@ -1173,10 +1308,10 @@ class System:
         ## Taurex chemistry        
         tauchem=TaurexChemistry(fill_gases=self.planet.atmosphere.fill_gas)
         for gas, mix_ratio in self.planet.atmosphere.composition.items():
-            # Convert actual mixing ratio to log10 value for TauREx
-            log_mix_ratio = np.log10(mix_ratio) if mix_ratio > 0 else -10
+            # Convert actual log10 mixing ratio to value for TauREx
+            mix_ratio = 10**mix_ratio
             tauchem.addGas(ConstantGas(molecule_name=gas,
-                                        mix_ratio=log_mix_ratio))
+                                        mix_ratio=mix_ratio))
         
         ## Transmission model
         tm = TransmissionModel(
@@ -1488,30 +1623,73 @@ class System:
   
         return fig, ax
 
-    def explore_multiverse(self, wn_grid, snr=10, n_universes=1, labels=None, header=False,
-                           n_observations=1, spectra=True, observations=True, path=None):
+    def clone_shuffled(self):
         """
-        Explore the multiverse, generate spectra and observations, and optionally save them in Parquet format.
+        Creates a new System instance using the original initialization parameters,
+        which will regenerate (reshuffle) the random values.
+        
+        Returns:
+            System: A freshly initialized System instance.
+        """
+        # Para el planeta, se usan los parámetros originales (original_params)
+        cloned_atmosphere = None
+        if self.planet.atmosphere is not None:
+            orig_atm = self.planet.atmosphere.original_params
+            cloned_atmosphere = Atmosphere(
+                seed=orig_atm["seed"],
+                temperature=orig_atm["temperature"],
+                base_pressure=orig_atm["base_pressure"],
+                top_pressure=orig_atm["top_pressure"],
+                composition=orig_atm["composition"],
+                fill_gas=orig_atm["fill_gas"]
+            )
+        cloned_planet = Planet(
+            seed=self.planet._original_params["seed"],
+            radius=self.planet._original_params["radius"],
+            mass=self.planet._original_params["mass"],
+            atmosphere=cloned_atmosphere
+        )
+        cloned_star = Star(
+            seed=self.star._original_params["seed"],
+            temperature=self.star._original_params["temperature"],
+            radius=self.star._original_params["radius"],
+            mass=self.star._original_params["mass"],
+            phoenix_path=self.star.phoenix_path if hasattr(self.star, 'phoenix_path') else None
+        )
+        return System(cloned_planet, cloned_star, seed=self._seed, sma=self._sma)
+
+    def explore_multiverse(self, wn_grid, snr=10, n_universes=1, labels=None, header=False,
+                       n_observations=1, spectra=True, observations=True, path=None, n_jobs=1):
+        """
+        Explore the multiverse by generating spectra and observations, and optionally save them
+        in Parquet format.
 
         Args:
             wn_grid (array): Wave number grid.
             snr (float, optional): Signal-to-noise ratio. Defaults to 10.
-            n_universes (int, optional): Number of universes to explore.
-                One planet per universe with properties drawn from the priors. Defaults to 1.
-            labels (list, optional): Labels for atmospheric composition. Example: [["CO2","CH4"],"CH4"].
+            n_universes (int, optional): Number of universes to explore. One planet per universe
+                is generated with properties drawn from the priors. Defaults to 1.
+            labels (list, optional): Labels for atmospheric composition. Example: [["CO2", "CH4"], "CH4"].
                 Defaults to None.
-            header (bool, optional): Whether to save the header in the saved files. Defaults to False.
-            n_observations (int, optional): Number of observations to generate. Defaults to 1.
+            header (bool, optional): Whether to include header information (system parameters) in the output.
+                Defaults to False.
+            n_observations (int, optional): Number of observations to generate per spectrum.
+                Defaults to 1.
             spectra (bool, optional): Whether to save the spectra. Defaults to True.
             observations (bool, optional): Whether to save the observations. Defaults to True.
-            path (str, optional): Path to save the files. If not provided, the files are not saved.
-        
+            path (str, optional): Path to save the files. If not provided, files are not saved.
+            n_jobs (int, optional): Number of parallel jobs to run. Defaults to 1 (sequential execution).
+                Use -1 to utilize all available cores.
+
         Returns:
-            dict: Dictionary containing 'spectra' and/or 'observations' DataFrames depending on arguments.
+            dict: Dictionary containing 'spectra' and/or 'observations' DataFrames depending on the arguments.
                 - spectra (DataFrame): Spectra of the universes.
                 - observations (DataFrame): Observations of the universes.
-        """
 
+        Example:
+            >>> system = System(planet, star, sma=1.0)
+            >>> results = system.explore_multiverse(wn_grid, snr=10, n_universes=5, header=True)
+        """
         # Validate the transmission model
         if self._transmission is None:
             raise ValueError("A transmission model has not been generated.")
@@ -1519,104 +1697,305 @@ class System:
         if not any([spectra, observations]):
             raise ValueError("At least one of 'spectra' or 'observations' must be True.")
         
-        # Initialize a list to store all spectra generated
-        spectra_list = []
-        header_list = []
+        def process_universe(i):
+            """
+            Process a single universe.
 
-        for i in tqdm(range(n_universes), desc="Exploring universes"):
-            self.make_tm()
-            #generate the spectrum dataframe
-            bin_wn,bin_rprs=self.generate_spectrum(wn_grid)
-            columns = list(10000 / np.array(bin_wn))            
-            bin_rprs_reshaped = bin_rprs.reshape(1, -1)
-            spec_df = pd.DataFrame(bin_rprs_reshaped, columns=columns)
+            This function clones the current system (using the clone() method),
+            generates the transmission model, extracts the spectrum, and prepares the header
+            with the system parameters.
 
-            current_spec_df = spec_df
+            Args:
+                i (int): Index of the universe (not used internally).
+
+            Returns:
+                tuple: A tuple containing:
+                    - header (dict): System parameters (if header is True).
+                    - spec_df (DataFrame): The generated spectrum as a DataFrame.
+            """
+            # Clone the system to have an independent instance
+            system_copy = self.clone_shuffled()
+            system_copy.make_tm()
+            bin_wn, bin_rprs = system_copy.generate_spectrum(wn_grid)
+            columns = list(10000 / np.array(bin_wn))
+            spec_df = pd.DataFrame(bin_rprs.reshape(1, -1), columns=columns)
             
-            # prepare the header            
-            current_header= dict()
-            # If header true, create a dataframe with system parameters
+            current_header = {}
             if header:
-                params_dict = self.get_params() 
-                current_header = params_dict
-
-            # Add the labels to the header as a list in a new column of the DataFrame
+                current_header = system_copy.get_params()
             if labels is not None:
-                # Validate the labels to add to the list
                 valid_labels = []
                 for label in labels:
-                    if (isinstance(label, str) 
-                            and label in self.transmission.chemistry.gases):
+                    if isinstance(label, str) and label in system_copy.transmission.chemistry.gases:
                         valid_labels.append(label)
                     elif isinstance(label, list):
-                        valid_sublabels = [sublabel for sublabel 
-                                           in label if sublabel
-                                           in self.transmission.chemistry.gases]
+                        valid_sublabels = [
+                            sublabel for sublabel in label
+                            if sublabel in system_copy.transmission.chemistry.gases
+                        ]
                         if valid_sublabels:
                             valid_labels.append(valid_sublabels)
-                if valid_labels:
-                    current_header["label"] = valid_labels
-                else:
-                    current_header["label"] = []
-                    
-            ## add the header to the list
-            header_list.append(current_header)
-            ## add the spectrum to the list
-            spectra_list.append(current_spec_df)
-            
-            # Move universe
-            self.reshuffle()
+                current_header["label"] = valid_labels if valid_labels else []
+            return current_header, spec_df
 
-        ## concatenate the list of spectra
-        all_spectra_df = pd.concat(spectra_list, axis=0,
-                                   ignore_index=True)  
-        ## concatenate the list of headers
+        # Process all universes either sequentially or in parallel
+        if n_jobs == 1:
+            results = [process_universe(i) for i in range(n_universes)]
+        else:
+            from joblib import Parallel, delayed
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(process_universe)(i) for i in range(n_universes)
+            )
+        
+        # Separate headers and spectra from the results
+        header_list = [res[0] for res in results]
+        spectra_list = [res[1] for res in results]
+        all_spectra_df = pd.concat(spectra_list, axis=0, ignore_index=True)
         all_header_df = pd.DataFrame(header_list)
         
-        ## concatenate the header and the spectra and asign attributes
         final_spectra_df = pd.concat([all_header_df, all_spectra_df], axis=1)
         warnings.filterwarnings("ignore")
         final_spectra_df.data = final_spectra_df.iloc[:, -all_spectra_df.shape[1]:]
         final_spectra_df.params = final_spectra_df.iloc[:, :all_header_df.shape[1]]
         warnings.filterwarnings("default")
         
-        # generate observations
         if observations:
             print(f"Generating observations for {n_universes} spectra...")
-            all_observations_df = generate_df_SNR_noise(final_spectra_df,n_observations,
-                                                    snr)
-            ## save the observations
+            all_observations_df = generate_df_SNR_noise(final_spectra_df, n_observations, snr)
             if path is not None:
-                ## copy the dataframe
-                all_observations_df_copy=all_observations_df.copy()
-                ## transform the columns to string
-                all_observations_df_copy.columns=all_observations_df_copy.columns.astype(str)
+                all_observations_df_copy = all_observations_df.copy()
+                all_observations_df_copy.columns = all_observations_df_copy.columns.astype(str)
                 all_observations_df_copy.to_parquet(f'{path}/multirex_observations.parquet')
             if spectra:
-                ## save the spectra
                 if path is not None:
-                    ## copy the dataframe
-                    final_spectra_df_copy=final_spectra_df.copy()
-                    ## transform the columns to string
-                    final_spectra_df_copy.columns=final_spectra_df_copy.columns.astype(str)
+                    final_spectra_df_copy = final_spectra_df.copy()
+                    final_spectra_df_copy.columns = final_spectra_df_copy.columns.astype(str)
                     final_spectra_df_copy.to_parquet(f'{path}/multirex_spectra.parquet')
-                return dict(
-                    spectra=final_spectra_df,
-                    observations=all_observations_df
-                )
+                return {"spectra": final_spectra_df, "observations": all_observations_df}
             else:
                 return all_observations_df
-        
-        else:            
-            ## save the spectra
+        else:
             if path is not None:
-                ## copy the dataframe
-                final_spectra_df_copy=final_spectra_df.copy()
-                ## transform the columns to string
-                final_spectra_df_copy.columns=final_spectra_df_copy.columns.astype(str)
+                final_spectra_df_copy = final_spectra_df.copy()
+                final_spectra_df_copy.columns = final_spectra_df_copy.columns.astype(str)
                 final_spectra_df_copy.to_parquet(f'{path}/multirex_spectra.parquet')
             return final_spectra_df
+
         
+
+    def clone_frozen(self):
+        """
+        Creates a new System instance with the current state, without reshuffling.
+        
+        Returns:
+            System: A clone of the current System with the same current parameter values.
+        """
+        # Clone the atmosphere, if present
+        cloned_atmosphere = None
+        if self.planet.atmosphere is not None:
+            cloned_atmosphere = Atmosphere(
+                seed=self.planet.atmosphere.seed,
+                temperature=self.planet.atmosphere.get_params()["temperature"],
+                base_pressure=self.planet.atmosphere.get_params()["base_pressure"],
+                top_pressure=self.planet.atmosphere.get_params()["top_pressure"],
+                composition=self.planet.atmosphere.get_params()["composition"],
+                fill_gas=self.planet.atmosphere.fill_gas
+            )
+        # Clone the planet using its original parameters
+        cloned_planet = Planet(
+            seed=self.planet.seed,
+            radius=self.planet.get_params()["p_radius"],
+            mass=self.planet.get_params()["p_mass"],
+            atmosphere=cloned_atmosphere
+        )
+        # Clone the star using its original parameters
+        cloned_star = Star(
+            seed=self.star.seed,
+            temperature=self.star.get_params()["s temperature"],
+            radius=self.star.get_params()["s radius"],
+            mass=self.star.get_params()["s mass"],
+            phoenix_path=self.star.phoenix_path if hasattr(self.star, 'phoenix_path') else None
+        )
+        return System(cloned_planet, cloned_star, seed=self._seed, sma=self._sma)
+
+    def explore_parameter_space(self, wn_grid, parameter_space, snr=10, labels=None,
+                                header=False, n_observations=1, spectra=True,
+                                observations=True, path=None, n_jobs=1):
+        """
+        Explore a parameter space by systematically varying parameters across specified
+        ranges.
+
+        This method allows for structured parameter space exploration by generating
+        spectra for all combinations of parameter values specified in the
+        parameter_space dictionary.
+
+        Args:
+            wn_grid (array): Wave number grid.
+            parameter_space (dict): Dictionary specifying the parameter space to explore.
+                Each key should be a parameter path (e.g., 'planet.atmosphere.temperature')
+                and each value should be one of:
+                    - A single value
+                    - A list of values
+                    - A dict with keys 'min', 'max', 'n', and optionally 'distribution'
+                    ('linear' or 'log')
+            snr (float, optional): Signal-to-noise ratio. Defaults to 10.
+            labels (list, optional): Labels for atmospheric composition. Example:
+                [["CO2", "CH4"], "CH4"]. Defaults to None.
+            header (bool, optional): Whether to include header information in the saved
+                files. Defaults to False.
+            n_observations (int, optional): Number of observations to generate.
+                Defaults to 1.
+            spectra (bool, optional): Whether to save the spectra. Defaults to True.
+            observations (bool, optional): Whether to save the observations. Defaults to True.
+            path (str, optional): Path to save the files. If not provided, files are not saved.
+            n_jobs (int, optional): Number of jobs to run in parallel. Defaults to 1,
+                meaning sequential execution. Use -1 to utilize all available cores.
+
+        Returns:
+            dict: Dictionary containing 'spectra' and/or 'observations' DataFrames
+                depending on the arguments.
+                - spectra (DataFrame): Spectra of the parameter space exploration.
+                - observations (DataFrame): Observations of the parameter space exploration.
+
+        Examples:
+            >>> system = System(planet, star, sma=1.0)
+            >>> parameter_space = {
+            ...     'planet.atmosphere.temperature': {'min': 200, 'max': 400, 'n': 3},
+            ...     'planet.atmosphere.composition.CH4': {
+            ...         'min': -10, 'max': -1, 'n': 10, 'distribution': 'linear'
+            ...     }
+            ... }
+            >>> wn_grid = Physics.wavenumber_grid(1.0, 10.0, 1000)
+            >>> results = system.explore_parameter_space(wn_grid, parameter_space, snr=10)
+        """
+        # Validate the transmission model
+        if self._transmission is None:
+            self.make_tm()
+
+        if not any([spectra, observations]):
+            raise ValueError("At least one of 'spectra' or 'observations' must be True.")
+
+        # Process parameter space to generate all parameter combinations
+        param_values = {}
+        for param_path, param_spec in parameter_space.items():
+            param_values[param_path] = generate_parameter_space_values(param_spec)
+        param_names = list(param_values.keys())
+        param_value_lists = [param_values[name] for name in param_names]
+        all_combinations = list(itertools.product(*param_value_lists))
+
+        def process_combination(combination):
+            """
+            Process a single combination of parameter values.
+
+            This function clones the current system using the clone method,
+            sets the parameters based on the given combination, generates the transmission
+            model and spectrum, and returns the header and the spectrum DataFrame.
+
+            Args:
+                combination (tuple): A tuple containing one value per parameter.
+
+            Returns:
+                tuple: A tuple containing the header (dict) and the spectrum DataFrame.
+            """
+            # En lugar de deepcopy, se usa el método clone para crear una nueva instancia.
+            system_copy = self.clone_frozen()
+            for i, param_path in enumerate(param_names):
+                param_value = combination[i]
+                path_parts = param_path.split('.')
+                current_obj = system_copy
+                for j in range(len(path_parts) - 1):
+                    if path_parts[j] == 'planet':
+                        current_obj = current_obj.planet
+                    elif path_parts[j] == 'star':
+                        current_obj = current_obj.star
+                    elif path_parts[j] == 'atmosphere':
+                        current_obj = current_obj.atmosphere
+                    elif path_parts[j] == 'composition':
+                        # Caso especial: actualizar directamente el diccionario de composición.
+                        gas_name = path_parts[j + 1]
+                        current_obj.composition[gas_name] = param_value
+                        break
+                else:
+                    # Si no es el caso de composición, se establece el atributo.
+                    attr_name = f"_{path_parts[-1]}"
+                    setattr(current_obj, attr_name, param_value)
+            system_copy.make_tm()
+            bin_wn, bin_rprs = system_copy.generate_spectrum(wn_grid)
+            columns = list(10000 / np.array(bin_wn))
+            spec_df = pd.DataFrame(bin_rprs.reshape(1, -1), columns=columns)
+            current_header = system_copy.get_params() if header else {}
+            if labels is not None:
+                valid_labels = []
+                for label in labels:
+                    if isinstance(label, str) and label in system_copy.transmission.chemistry.gases:
+                        valid_labels.append(label)
+                    elif isinstance(label, list):
+                        valid_sublabels = [
+                            sublabel for sublabel in label
+                            if sublabel in system_copy.transmission.chemistry.gases
+                        ]
+                        if valid_sublabels:
+                            valid_labels.append(valid_sublabels)
+                current_header["label"] = valid_labels if valid_labels else []
+            return current_header, spec_df
+
+
+        # Process all combinations either sequentially or in parallel
+        if n_jobs == 1:
+            results = [process_combination(comb) for comb in all_combinations]
+        else:
+            results = Parallel(n_jobs=n_jobs)(
+                delayed(process_combination)(comb) for comb in all_combinations
+            )
+
+        # Separate headers and spectra from the results
+        header_list = [res[0] for res in results]
+        spectra_list = [res[1] for res in results]
+        all_spectra_df = pd.concat(spectra_list, axis=0, ignore_index=True)
+        all_header_df = pd.DataFrame(header_list)
+
+        # Concatenate the headers and spectra, and assign special attributes
+        final_spectra_df = pd.concat([all_header_df, all_spectra_df], axis=1)
+        warnings.filterwarnings("ignore")
+        final_spectra_df.data = final_spectra_df.iloc[:, -all_spectra_df.shape[1]:]
+        final_spectra_df.params = final_spectra_df.iloc[:, :all_header_df.shape[1]]
+        warnings.filterwarnings("default")
+
+        # Generate observations if requested
+        if observations:
+            print(f"Generating observations for {len(all_combinations)} spectra...")
+            all_observations_df = generate_df_SNR_noise(final_spectra_df,
+                                                        n_observations, snr)
+            if path is not None:
+                # Save the observations if a path is provided
+                all_observations_df_copy = all_observations_df.copy()
+                all_observations_df_copy.columns = (
+                    all_observations_df_copy.columns.astype(str)
+                )
+                all_observations_df_copy.to_parquet(
+                    f'{path}/multirex_parameter_space_observations.parquet'
+                )
+            if spectra:
+                if path is not None:
+                    final_spectra_df_copy = final_spectra_df.copy()
+                    final_spectra_df_copy.columns = final_spectra_df_copy.columns.astype(str)
+                    final_spectra_df_copy.to_parquet(
+                        f'{path}/multirex_parameter_space_spectra.parquet'
+                    )
+                return {"spectra": final_spectra_df,
+                        "observations": all_observations_df}
+            else:
+                return all_observations_df
+        else:
+            if path is not None:
+                final_spectra_df_copy = final_spectra_df.copy()
+                final_spectra_df_copy.columns = final_spectra_df_copy.columns.astype(str)
+                final_spectra_df_copy.to_parquet(
+                    f'{path}/multirex_parameter_space_spectra.parquet'
+                )
+            return final_spectra_df
+
+
     def __str__(self):
 
         composition_str = ""
@@ -1630,4 +2009,27 @@ Semimajor axis: {self.sma:.2f} au
 Atmosphere: {self.planet.atmosphere.temperature:.1f} K, {self.planet.atmosphere.base_pressure:.0f} Pa - {self.planet.atmosphere.top_pressure:.0f} Pa, {self.planet.atmosphere.fill_gas} fill gas
 Composition: {composition_str}"""
         return str
-    
+
+
+    def __getstate__(self):
+        """
+        Return the state of the object for pickling.
+
+        Returns:
+            dict: The state dictionary of the System object, excluding non-picklable attributes.
+        """
+        state = self.__dict__.copy()
+        # Exclude the transmission model since it is generated dynamically.
+        if '_transmission' in state:
+            del state['_transmission']
+        return state
+
+
+    def __setstate__(self, state):
+        """
+        Restore the state of the object from the unpickled state.
+
+        Args:
+            state (dict): The state dictionary to restore.
+        """
+        self.__dict__.update(state)

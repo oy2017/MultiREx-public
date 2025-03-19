@@ -17,8 +17,8 @@ def test_atmosphere_initialization_with_ranges():
     assert 250 <= atm.temperature <= 350
     assert 800 <= atm.base_pressure <= 1200
     assert 50 <= atm.top_pressure <= 150
-    assert 10**(-4) <= atm.composition["H2O"] <= 10**(-2)
-    assert atm.composition["CO2"] == 10**(-3)
+    assert -4 <= atm.composition["H2O"] <= -2
+    assert atm.composition["CO2"] == -3
     assert atm.fill_gas == "N2"
 
 def test_atmosphere_with_multiple_fill_gases():
@@ -112,4 +112,4 @@ def test_atmosphere_reshuffle():
     assert 250 <= atm.temperature <= 350
     assert 800 <= atm.base_pressure <= 1200
     assert 50 <= atm.top_pressure <= 150
-    assert 10**(-4) <= atm.composition["H2O"] <= 10**(-2)
+    assert -4 <= atm.composition["H2O"] <= -2
