@@ -13,11 +13,11 @@
 [![ascl](https://img.shields.io/badge/ascl-2205.016-blue.svg?colorB=262255)](https://ascl.net/2205.016)
 -->
 
-MultiREx is a Python library designed for generating synthetic exoplanet transmission spectra. This tool extends the functionalities of the `Taurex <https://taurex3.readthedocs.io/en/latest/index.html>` library (see below), reorganizing and enabling the massive generation of spectra and observations with added noise. The package was originally devised for training large machine learning models at identifying the presence of biosignatures in noisy spectra. However, it should also be used for other purposes.
+MultiREx is a Python library designed for generating synthetic exoplanet transmission spectra. This tool extends the functionalities of the [Taurex](https://taurex3.readthedocs.io/en/latest/index.html) library (see below), reorganizing and enabling the massive generation of spectra and observations with added noise. The package was originally devised for training large machine learning models at identifying the presence of biosignatures in noisy spectra. However, it should also be used for other purposes.
 
 For the science behind the model please refer to the following paper:
 
-> David S. Duque-Castaño, Jorge I. Zuluaga, and Lauren Flor-Torres (2024), **Machine-assisted classification of potential biosignatures in earth-like exoplanets using low signal-to-noise ratio transmission spectra**, submitted to MNRAS, [arXiv:2407.19167](https://arxiv.org/abs/2407.19167).
+> David S. Duque-Castaño, Jorge I. Zuluaga, and Lauren Flor-Torres (2024), **Machine-assisted classification of potential biosignatures in earth-like exoplanets using low signal-to-noise ratio transmission spectra**, accepted to MNRAS, [arXiv:2407.19167](https://arxiv.org/abs/2407.19167). The notebooks used to develop this work are available in the [examples/papers/DZF-MLBiosignatureClassification](https://github.com/D4san/MultiREx-public/tree/main/examples/papers/DZF-MLBiosignatureClassification) directory.
 
 <!--
 [Astronomy and Computing 40 (2022) 100623](https://www.sciencedirect.com/science/article/pii/S2213133722000476), [arXiv:2207.08636](https://arxiv.org/abs/2207.08636).
