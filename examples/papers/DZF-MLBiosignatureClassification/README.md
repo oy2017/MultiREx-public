@@ -5,6 +5,8 @@
 
 This folder contains the notebooks and data necessary to replicate the results and plots of the scientific article titled "Machine-assisted classification of potential biosignatures in Earth-like exoplanets using low signal-to-noise ratio transmission spectra." Here, you will find all the procedures, scripts, and data files used in the numerical experiments presented in the study.
 
+You can download the trained models generated in this series of notebooks at the following [link](https://drive.google.com/drive/folders/1ozPE2qjo_8gPvC4tWKrV9OjCKKC5VEKV?usp=drive_link). To use them, your input spectrum should span approximately 0.7 to 5.3 µm with a total of 385 points. First, process the spectrum using one of the autoencoders (files labeled with `AE`), and subsequently pass this output into one of the classifiers (files labeled with `RF`).
+
 ## Requirements
 
 The following Python libraries are required to run the scripts and notebooks in this folder:
