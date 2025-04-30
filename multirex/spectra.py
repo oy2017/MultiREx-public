@@ -1809,13 +1809,16 @@ class System:
             atmosphere=cloned_atmosphere
         )
         # Clone the star using its original parameters
+                # Clone the star using its original parameters
         cloned_star = Star(
             seed=self.star.seed,
             temperature=self.star.get_params()["s temperature"],
             radius=self.star.get_params()["s radius"],
             mass=self.star.get_params()["s mass"],
-            phoenix_path=self.star.phoenix_path if hasattr(self.star, 'phoenix_path') else None
         )
+        if getattr(self.star, "phoenix", False):
+            cloned_star.phoenix = True
+            cloned_star.phoenix_path = self.star.phoenix_path
         return System(cloned_planet, cloned_star, seed=self._seed, sma=self._sma)
 
     def explore_parameter_space(self, wn_grid, parameter_space, snr=10, labels=None,

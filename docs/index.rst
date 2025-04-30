@@ -46,6 +46,7 @@ to MNRAS,
    :caption: Contents:
 
    notebooks/quickstart
+   notebooks/parameter_exploration
    modules   
    
 
