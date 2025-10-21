@@ -379,7 +379,7 @@ class Atmosphere:
             fill_gas = fill_gas
         )
 
-        self._seed = seed if seed is not None else int(time.time())
+        self._seed = seed if seed is not None else time.time_ns() % (2**32 - 1)
         np.random.seed(self._seed)
         
         # Initialize attributes with None to avoid validation errors during initialization
@@ -615,7 +615,7 @@ class Atmosphere:
         """
         Regenerates the atmosphere based on original values or range of values.
         """
-        self._seed = self._original_params.get("seed", int(time.time()))
+        self._seed = self._original_params.get("seed", time.time_ns() % (2**32 - 1))
         np.random.seed(self._seed)
         self.set_temperature(self._original_params["temperature"])
         self.set_base_pressure(self._original_params["base_pressure"])
@@ -706,7 +706,7 @@ class Planet:
         self._original_params = dict(
             seed=seed, radius=radius, mass=mass
         ) 
-        self._seed = seed if seed is not None else int(time.time())
+        self._seed = seed if seed is not None else time.time_ns() % (2**32 - 1)
         np.random.seed(self._seed)
 
         self._radius = generate_value(radius)
@@ -843,7 +843,7 @@ class Planet:
         """
         Regenerates the planet's attributes using the original values and optionally updates the atmosphere, excluding albedo.
         """
-        self._seed = self._original_params.get("seed", int(time.time()))
+        self._seed = self._original_params.get("seed", time.time_ns() % (2**32 - 1))
         np.random.seed(self._seed)
         self.set_radius(self._original_params["radius"])
         self.set_mass(self._original_params["mass"])
@@ -920,7 +920,7 @@ class Star:
             mass=mass
         )
         
-        self._seed = seed if seed is not None else int(time.time())
+        self._seed = seed if seed is not None else time.time_ns() % (2**32 - 1)
         np.random.seed(self._seed)
 
         self._temperature = generate_value(temperature)
@@ -1037,7 +1037,7 @@ class Star:
         """
         Regenerates the star's attributes using the original values.
         """
-        self.set_seed(self._original_params.get("seed", int(time.time())))
+        self.set_seed(self._original_params.get("seed", time.time_ns() % (2**32 - 1)))
         self.set_temperature(self._original_params["temperature"])
         self.set_radius(self._original_params["radius"])
         self.set_mass(self._original_params["mass"])
@@ -1121,7 +1121,7 @@ class System:
             sma=sma
         )
         
-        self._seed = seed if seed is not None else int(time.time())
+        self._seed = seed if seed is not None else time.time_ns() % (2**32 - 1)
         np.random.seed(self._seed)
 
         self.set_planet(planet)
@@ -1245,7 +1245,7 @@ class System:
         Regenerates the system's attributes using the original values.
         """
         self._seed = self._original_params.get("seed",
-                                               int(time.time()))
+                                               time.time_ns() % (2**32 - 1))
                  
         np.random.seed(self._seed)
         self.set_sma(self.original_params["sma"])
@@ -1636,7 +1636,6 @@ class System:
         if self.planet.atmosphere is not None:
             orig_atm = self.planet.atmosphere.original_params
             cloned_atmosphere = Atmosphere(
-                seed=orig_atm["seed"],
                 temperature=orig_atm["temperature"],
                 base_pressure=orig_atm["base_pressure"],
                 top_pressure=orig_atm["top_pressure"],
@@ -1644,19 +1643,17 @@ class System:
                 fill_gas=orig_atm["fill_gas"]
             )
         cloned_planet = Planet(
-            seed=self.planet._original_params["seed"],
             radius=self.planet._original_params["radius"],
             mass=self.planet._original_params["mass"],
             atmosphere=cloned_atmosphere
         )
         cloned_star = Star(
-            seed=self.star._original_params["seed"],
             temperature=self.star._original_params["temperature"],
             radius=self.star._original_params["radius"],
             mass=self.star._original_params["mass"],
             phoenix_path=self.star.phoenix_path if hasattr(self.star, 'phoenix_path') else None
         )
-        return System(cloned_planet, cloned_star, seed=self._seed, sma=self._sma)
+        return System(cloned_planet, cloned_star, sma=self._original_params["sma"])
 
     def explore_multiverse(self, wn_grid, snr=10, n_universes=1, labels=None, header=False,
                        n_observations=1, spectra=True, observations=True, path=None, n_jobs=1):
@@ -1716,26 +1713,57 @@ class System:
             # Clone the system to have an independent instance
             system_copy = self.clone_shuffled()
             system_copy.make_tm()
-            bin_wn, bin_rprs = system_copy.generate_spectrum(wn_grid)
-            columns = list(10000 / np.array(bin_wn))
-            spec_df = pd.DataFrame(bin_rprs.reshape(1, -1), columns=columns)
             
+            spec_df = None
             current_header = {}
-            if header:
-                current_header = system_copy.get_params()
-            if labels is not None:
-                valid_labels = []
-                for label in labels:
-                    if isinstance(label, str) and label in system_copy.transmission.chemistry.gases:
-                        valid_labels.append(label)
-                    elif isinstance(label, list):
-                        valid_sublabels = [
-                            sublabel for sublabel in label
-                            if sublabel in system_copy.transmission.chemistry.gases
-                        ]
-                        if valid_sublabels:
-                            valid_labels.append(valid_sublabels)
-                current_header["label"] = valid_labels if valid_labels else []
+
+            try:
+                with warnings.catch_warnings(record=True) as w:
+                    warnings.simplefilter("always")
+
+                    bin_wn, bin_rprs = system_copy.generate_spectrum(wn_grid)
+                    
+                    # Check for NaNs in the output spectrum
+                    if np.isnan(bin_rprs).any():
+                        raise ValueError("NaN value detected in spectrum")
+
+                    # If warnings were issued, treat as a failure
+                    if len(w) > 0:
+                        # Check if any warning is a RuntimeWarning, often related to overflow
+                        if any(issubclass(warn.category, RuntimeWarning) for warn in w):
+                            raise RuntimeWarning("Overflow or other runtime warning caught")
+
+                columns = list(10000 / np.array(bin_wn))
+                spec_df = pd.DataFrame(bin_rprs.reshape(1, -1), columns=columns)
+                
+                if header:
+                    current_header = system_copy.get_params()
+                if labels is not None:
+                    valid_labels = []
+                    for label in labels:
+                        if isinstance(label, str) and label in system_copy.transmission.chemistry.gases:
+                            valid_labels.append(label)
+                        elif isinstance(label, list):
+                            valid_sublabels = [
+                                sublabel for sublabel in label
+                                if sublabel in system_copy.transmission.chemistry.gases
+                            ]
+                            if valid_sublabels:
+                                valid_labels.append(valid_sublabels)
+                    current_header["label"] = valid_labels if valid_labels else []
+
+            except (ValueError, RuntimeWarning) as e:
+                # Log the failing parameters to a file
+                with open("failed_parameters.log", "a") as f:
+                    f.write(f"--- FAILED UNIVERSE ---\n")
+                    f.write(f"Reason: {str(e)}\n")
+                    params = system_copy.get_params()
+                    for key, value in params.items():
+                        f.write(f"{key}: {value}\n")
+                    f.write("\n")
+                # Return None for header and spec_df to indicate failure
+                return None, None
+
             return current_header, spec_df
 
         # Process all universes either sequentially or in parallel
@@ -1747,9 +1775,15 @@ class System:
                 delayed(process_universe)(i) for i in range(n_universes)
             )
         
-        # Separate headers and spectra from the results
-        header_list = [res[0] for res in results]
-        spectra_list = [res[1] for res in results]
+        # Separate headers and spectra from the results, filtering out failed runs
+        successful_results = [res for res in results if res[0] is not None and res[1] is not None]
+        
+        if not successful_results:
+            print("Warning: All universes failed to generate valid spectra.")
+            return {"spectra": pd.DataFrame(), "observations": pd.DataFrame()}
+
+        header_list = [res[0] for res in successful_results]
+        spectra_list = [res[1] for res in successful_results]
         all_spectra_df = pd.concat(spectra_list, axis=0, ignore_index=True)
         all_header_df = pd.DataFrame(header_list)
         
