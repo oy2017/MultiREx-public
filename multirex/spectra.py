@@ -43,7 +43,8 @@ from taurex.binning import FluxBinner, SimpleBinner
 from taurex.cache import OpacityCache, CIACache
 from taurex.chemistry import TaurexChemistry, ConstantGas
 from taurex.contributions import (AbsorptionContribution, RayleighContribution,
-                                  SimpleCloudsContribution)
+                                  SimpleCloudsContribution,
+                                  FlatMieContribution, LeeMieContribution)
 from taurex.model import TransmissionModel
 from taurex.planet import Planet as tauP
 from taurex.stellar import PhoenixStar, BlackbodyStar
@@ -349,7 +350,8 @@ class Atmosphere:
     """
     def __init__(self, seed=None, temperature=None, 
                  base_pressure=None, top_pressure=None, 
-                 composition=None, fill_gas=None, cloud_pressure=None):        
+                 composition=None, fill_gas=None, cloud_pressure=None,
+                 cloud_model=None):        
         """Initialize an Atmosphere object.
         
         Args:
@@ -386,7 +388,8 @@ class Atmosphere:
             top_pressure = top_pressure,
             composition=  composition if composition is not None else dict(),
             fill_gas = fill_gas,
-            cloud_pressure = cloud_pressure
+            cloud_pressure = cloud_pressure,
+            cloud_model = cloud_model
         )
 
         self._seed = seed if seed is not None else time.time_ns() % (2**32 - 1)
@@ -397,6 +400,7 @@ class Atmosphere:
         # pressure per planet in Pa; a scalar fixes it.
         self.cloud_pressure = Physics.generate_value(cloud_pressure) \
             if cloud_pressure is not None else None
+        self.cloud_model = dict(cloud_model) if cloud_model else None
         
         # Initialize attributes with None to avoid validation errors during initialization
         self._temperature = None
@@ -625,6 +629,7 @@ class Atmosphere:
             composition = self._composition,
             fill_gas = self._fill_gas,
             cloud_pressure = self.cloud_pressure,
+            cloud_model = self.cloud_model,
             seed = self._seed
         )
 
@@ -641,6 +646,8 @@ class Atmosphere:
         self.set_fill_gas(self._original_params["fill_gas"])
         _cp = self._original_params.get("cloud_pressure")
         self.cloud_pressure = Physics.generate_value(_cp) if _cp is not None else None
+        _cm = self._original_params.get("cloud_model")
+        self.cloud_model = dict(_cm) if _cm else None
         
     def validate(self):
         """
@@ -1342,8 +1349,28 @@ class System:
             atm_min_pressure=self.planet.atmosphere.top_pressure)
         tm.add_contribution(AbsorptionContribution())
         tm.add_contribution(RayleighContribution())
+        _cm = getattr(self.planet.atmosphere, 'cloud_model', None)
         _cp = getattr(self.planet.atmosphere, 'cloud_pressure', None)
-        if _cp is not None:
+        if _cm:
+            kind = _cm.get("type", "simple")
+            if kind == "simple":
+                tm.add_contribution(SimpleCloudsContribution(
+                    clouds_pressure=_cm["pressure"]))
+            elif kind == "flat_mie":
+                tm.add_contribution(FlatMieContribution(
+                    flat_mix_ratio=_cm.get("mix_ratio", 1e-10),
+                    flat_bottomP=_cm.get("bottomP", -1),
+                    flat_topP=_cm.get("topP", -1)))
+            elif kind == "lee_mie":
+                tm.add_contribution(LeeMieContribution(
+                    lee_mie_radius=_cm.get("radius", 0.01),
+                    lee_mie_q=_cm.get("q", 40),
+                    lee_mie_mix_ratio=_cm.get("mix_ratio", 1e-10),
+                    lee_mie_bottomP=_cm.get("bottomP", -1),
+                    lee_mie_topP=_cm.get("topP", -1)))
+            else:
+                raise ValueError(f"unknown cloud_model type: {kind}")
+        elif _cp is not None:
             tm.add_contribution(SimpleCloudsContribution(clouds_pressure=_cp))
         tm.build()
         
@@ -1663,7 +1690,8 @@ class System:
                 top_pressure=orig_atm["top_pressure"],
                 composition=orig_atm["composition"],
                 fill_gas=orig_atm["fill_gas"],
-                cloud_pressure=orig_atm.get("cloud_pressure")
+                cloud_pressure=orig_atm.get("cloud_pressure"),
+                cloud_model=orig_atm.get("cloud_model")
             )
         cloned_planet = Planet(
             radius=self.planet._original_params["radius"],
@@ -1857,7 +1885,8 @@ class System:
                 top_pressure=self.planet.atmosphere.get_params()["top_pressure"],
                 composition=self.planet.atmosphere.get_params()["composition"],
                 fill_gas=self.planet.atmosphere.fill_gas,
-                cloud_pressure=self.planet.atmosphere.cloud_pressure
+                cloud_pressure=self.planet.atmosphere.cloud_pressure,
+                cloud_model=self.planet.atmosphere.cloud_model
             )
         # Clone the planet using its original parameters
         cloned_planet = Planet(
