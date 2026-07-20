@@ -624,6 +624,7 @@ class Atmosphere:
             top_pressure = self._top_pressure,
             composition = self._composition,
             fill_gas = self._fill_gas,
+            cloud_pressure = self.cloud_pressure,
             seed = self._seed
         )
 
@@ -1661,7 +1662,8 @@ class System:
                 base_pressure=orig_atm["base_pressure"],
                 top_pressure=orig_atm["top_pressure"],
                 composition=orig_atm["composition"],
-                fill_gas=orig_atm["fill_gas"]
+                fill_gas=orig_atm["fill_gas"],
+                cloud_pressure=orig_atm.get("cloud_pressure")
             )
         cloned_planet = Planet(
             radius=self.planet._original_params["radius"],
@@ -1854,7 +1856,8 @@ class System:
                 base_pressure=self.planet.atmosphere.get_params()["base_pressure"],
                 top_pressure=self.planet.atmosphere.get_params()["top_pressure"],
                 composition=self.planet.atmosphere.get_params()["composition"],
-                fill_gas=self.planet.atmosphere.fill_gas
+                fill_gas=self.planet.atmosphere.fill_gas,
+                cloud_pressure=self.planet.atmosphere.cloud_pressure
             )
         # Clone the planet using its original parameters
         cloned_planet = Planet(
