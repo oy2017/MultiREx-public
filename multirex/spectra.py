@@ -638,6 +638,8 @@ class Atmosphere:
         self.set_top_pressure(self._original_params["top_pressure"])
         self.set_composition(self._original_params.get("composition", {}))
         self.set_fill_gas(self._original_params["fill_gas"])
+        _cp = self._original_params.get("cloud_pressure")
+        self.cloud_pressure = Physics.generate_value(_cp) if _cp is not None else None
         
     def validate(self):
         """
