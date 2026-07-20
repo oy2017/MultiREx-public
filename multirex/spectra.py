@@ -42,7 +42,8 @@ import taurex.log
 from taurex.binning import FluxBinner, SimpleBinner
 from taurex.cache import OpacityCache, CIACache
 from taurex.chemistry import TaurexChemistry, ConstantGas
-from taurex.contributions import AbsorptionContribution, RayleighContribution
+from taurex.contributions import (AbsorptionContribution, RayleighContribution,
+                                  SimpleCloudsContribution)
 from taurex.model import TransmissionModel
 from taurex.planet import Planet as tauP
 from taurex.stellar import PhoenixStar, BlackbodyStar
@@ -348,7 +349,7 @@ class Atmosphere:
     """
     def __init__(self, seed=None, temperature=None, 
                  base_pressure=None, top_pressure=None, 
-                 composition=None, fill_gas=None):        
+                 composition=None, fill_gas=None, cloud_pressure=None):        
         """Initialize an Atmosphere object.
         
         Args:
@@ -364,6 +365,14 @@ class Atmosphere:
                 where values can be fixed or ranges for random generation.
             fill_gas (str or list, optional): Gas or list of gases used as filler in the
                 atmosphere composition to ensure the total mixing ratio equals 1.
+            cloud_pressure (float or tuple, optional): Cloud-top pressure in Pa for an
+                optically thick grey cloud deck. Can be a single value or a range
+                (min, max) for random generation. If None (the default) no cloud
+                contribution is added and the spectrum is cloud-free, matching the
+                behaviour of earlier versions. Note that clouds only suppress
+                transmission features when the deck lies above the pressure region
+                the spectrum probes, so values comparable to top_pressure have a
+                far larger effect than values near base_pressure.
         
         Note:
             The base_pressure must be greater than top_pressure, as base refers to
@@ -376,11 +385,18 @@ class Atmosphere:
             base_pressure = base_pressure,
             top_pressure = top_pressure,
             composition=  composition if composition is not None else dict(),
-            fill_gas = fill_gas
+            fill_gas = fill_gas,
+            cloud_pressure = cloud_pressure
         )
 
         self._seed = seed if seed is not None else time.time_ns() % (2**32 - 1)
         np.random.seed(self._seed)
+
+        # Grey cloud deck. None disables clouds entirely, reproducing the
+        # original cloud-free behaviour. A (min, max) tuple draws a cloud-top
+        # pressure per planet in Pa; a scalar fixes it.
+        self.cloud_pressure = Physics.generate_value(cloud_pressure) \
+            if cloud_pressure is not None else None
         
         # Initialize attributes with None to avoid validation errors during initialization
         self._temperature = None
@@ -1323,6 +1339,9 @@ class System:
             atm_min_pressure=self.planet.atmosphere.top_pressure)
         tm.add_contribution(AbsorptionContribution())
         tm.add_contribution(RayleighContribution())
+        _cp = getattr(self.planet.atmosphere, 'cloud_pressure', None)
+        if _cp is not None:
+            tm.add_contribution(SimpleCloudsContribution(clouds_pressure=_cp))
         tm.build()
         
         self._transmission=tm
